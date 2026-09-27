@@ -51,6 +51,25 @@ viewer name and PID in the user's XDG runtime directory. Set
 use the emitted `CAD_VIEWER_PORT` for the build that belongs there. The status
 command lists CadKit-managed viewers and clears stale entries automatically.
 
+### Deterministic previews
+
+An HTTP listener is not a ready viewer: OCP-VSCode discards a model sent
+before its browser websocket connects. Start, open, wait, then build. Toolbox
+encodes that order in one project-neutral command:
+
+```bash
+toolbox preview --port 3939 -- ./preview lamp_shade/shade.py
+```
+
+It reserves or starts the named server, opens its browser window, waits for
+that browser to register, then runs the supplied command with
+`CAD_VIEWER_PORT` set. A direct `viewer.show` to a listener without a browser
+returns `False` and explains why; it never silently black-holes a model.
+
+`viewer.prepare()` and `viewer.wait_for_browser()` provide the same readiness
+boundary for a Python integration. They are for an explicit preview action;
+ordinary model generation remains headless and never waits for a GUI.
+
 ## Drawings: `cadkit.sheet`
 
 ```python

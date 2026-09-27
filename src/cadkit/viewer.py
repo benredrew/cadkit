@@ -110,12 +110,12 @@ def _reserve(port, name):
 
 
 def _mark_running(port, name):
-    """Record the foreground server process that now owns `port`."""
+    """Record a live server that is waiting for a browser client."""
     with _registry() as viewers:
         viewers[str(port)] = {
             "name": name,
             "pid": os.getpid(),
-            "state": "running",
+            "state": "waiting",
             "updated": time.time(),
         }
 
@@ -126,11 +126,45 @@ def _release(port):
         viewers.pop(str(port), None)
 
 
+def _mark_browser_ready(port, name):
+    """Record that this server has a registered browser client."""
+    with _registry() as viewers:
+        viewers[str(port)] = {
+            "name": name,
+            "pid": os.getpid(),
+            "state": "ready",
+            "updated": time.time(),
+        }
+
+
+def _mark_browser_waiting(port, name):
+    """Record that this server no longer has a browser client."""
+    with _registry() as viewers:
+        entry = viewers.get(str(port))
+        # Do not let a stale connection from an older server change the state
+        # of a newer process which happened to reuse this port.
+        if entry and entry.get("pid") not in (None, os.getpid()):
+            return
+        viewers[str(port)] = {
+            "name": name,
+            "pid": os.getpid(),
+            "state": "waiting",
+            "updated": time.time(),
+        }
+
+
 def registered_viewers():
     """Live CadKit viewers as ``{port: {name, pid, state}}``."""
     with _registry() as viewers:
         _prune(viewers)
         return {int(port): entry.copy() for port, entry in viewers.items()}
+
+
+def is_ready(port):
+    """True only when CadKit knows a browser is connected to `port`."""
+    with _registry() as viewers:
+        _prune(viewers)
+        return viewers.get(str(port), {}).get("state") == "ready"
 
 
 def is_listening(port, host=HOST, timeout=0.25):
@@ -165,10 +199,13 @@ def serve(port=None, name=None, open_window=True, wait=25.0, python=None):
     """
     name = _viewer_name(name)
     candidates = (port,) if port is not None else PORT_RANGE
+    already_running = False
     for candidate in candidates:
         if is_listening(candidate):
             if port is not None:
-                return candidate, f"http://{HOST}:{candidate}/"
+                port = candidate
+                already_running = True
+                break
             continue
         if _reserve(candidate, name):
             port = candidate
@@ -178,29 +215,57 @@ def serve(port=None, name=None, open_window=True, wait=25.0, python=None):
             raise RuntimeError(f"viewer port {port} is already reserved")
         raise RuntimeError(f"no free port in {PORT_RANGE.start}..{PORT_RANGE.stop - 1}")
 
-    python = python or sys.executable
-    try:
-        subprocess.Popen(
-            [python, "-m", "cadkit.viewer", "--server", "--host", HOST,
-             "--port", str(port), "--name", name],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except Exception:
-        _release(port)
-        raise
-    deadline = time.time() + wait
-    while time.time() < deadline:
-        if is_listening(port):
-            break
-        time.sleep(0.25)
-    else:
-        _release(port)
-        raise RuntimeError(f"viewer did not come up on {port} within {wait:g}s")
+    if not already_running:
+        python = python or sys.executable
+        try:
+            subprocess.Popen(
+                [python, "-m", "cadkit.viewer", "--server", "--host", HOST,
+                 "--port", str(port), "--name", name],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except Exception:
+            _release(port)
+            raise
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            if is_listening(port):
+                break
+            time.sleep(0.25)
+        else:
+            _release(port)
+            raise RuntimeError(f"viewer did not come up on {port} within {wait:g}s")
 
     url = f"http://{HOST}:{port}/"
     if open_window:
         open_viewer_window(url)
+    return port, url
+
+
+def wait_for_browser(port, wait=25.0):
+    """Wait for a CadKit browser client or fail before a scene is sent.
+
+    A listening HTTP port is not sufficient: OCP-VSCode discards a model sent
+    before the browser websocket registers. This is deliberately separate from
+    `serve` so ordinary headless server use remains non-blocking.
+    """
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        if is_ready(port):
+            return
+        if not is_listening(port):
+            raise RuntimeError(f"viewer stopped while waiting for its browser on {port}")
+        time.sleep(0.1)
+    raise RuntimeError(
+        f"browser did not register with viewer {port} within {wait:g}s; "
+        "the preview command was not run"
+    )
+
+
+def prepare(port=None, name=None, wait=25.0, python=None):
+    """Start/open a viewer and return only once its browser can receive data."""
+    port, url = serve(port=port, name=name, open_window=True, wait=wait, python=python)
+    wait_for_browser(port, wait=wait)
     return port, url
 
 
@@ -211,10 +276,62 @@ def open_viewer_window(url):
     return webbrowser.open(url)
 
 
+class _BrowserSocket:
+    """Tag the browser websocket without modifying OCP-VSCode itself."""
+
+    def __init__(self, socket_):
+        self._socket = socket_
+        self.registered = False
+
+    def receive(self):
+        data = self._socket.receive()
+        if (isinstance(data, bytes) and data.startswith(b"L:")) or (
+            isinstance(data, str) and data.startswith("L:")
+        ):
+            self.registered = True
+        return data
+
+    def __getattr__(self, attr):
+        return getattr(self._socket, attr)
+
+
 def _server(port, name):
     """Run OCP-VSCode in the foreground with CadKit's generic UI defaults."""
     from ocp_vscode import standalone
     from ocp_vscode.__main__ import main
+
+    class CadKitViewer(standalone.Viewer):
+        """Expose browser readiness around OCP-VSCode's standalone server."""
+
+        def __init__(self, params):
+            self._cadkit_name = name
+            super().__init__(params)
+
+        @property
+        def javascript_client(self):
+            return getattr(self, "_cadkit_javascript_client", None)
+
+        @javascript_client.setter
+        def javascript_client(self, client):
+            previous = getattr(self, "_cadkit_javascript_client", None)
+            self._cadkit_javascript_client = client
+            # OCP assigns this immediately after consuming the browser's L
+            # registration message. Mark ready only after that assignment: a
+            # model launched by `toolbox preview` cannot race it.
+            if isinstance(client, _BrowserSocket) and client.registered:
+                _mark_browser_ready(self.port, self._cadkit_name)
+            elif client is None and isinstance(previous, _BrowserSocket):
+                _mark_browser_waiting(self.port, self._cadkit_name)
+
+        def handle_message(self, socket_):
+            client = _BrowserSocket(socket_)
+            try:
+                return super().handle_message(client)
+            finally:
+                # OCP-VSCode retains a disconnected browser socket. Clear it
+                # here so a later direct push is rejected, never black-holed.
+                if client.registered and self.javascript_client is client:
+                    self.javascript_client = None
 
     # These are viewer ergonomics, not a project's model behaviour. Keeping
     # them here lets every project use the same unobtrusive starting window.
@@ -224,6 +341,10 @@ def _server(port, name):
     )
     _mark_running(port, name)
     try:
+        # `ocp_vscode.__main__.main()` imports Viewer at call time, so this
+        # small subclass keeps upstream behaviour while giving CadKit the one
+        # readiness signal its public workflow needs.
+        standalone.Viewer = CadKitViewer
         main()
     finally:
         _release(port)
@@ -248,6 +369,11 @@ def show(obj, name=None, port=None, quiet=False, clear=True,
         if not quiet:
             print("viewer       none listening -- not shown "
                   "(cadkit.viewer.serve() starts one)", file=sys.stderr)
+        return False
+    if not is_ready(port):
+        if not quiet:
+            print(f"viewer       {port} is waiting for its browser -- not shown "
+                  "(run it through `toolbox preview`)", file=sys.stderr)
         return False
 
     from ocp_vscode import set_port, show_object      # imported only if used

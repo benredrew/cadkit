@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cadkit"
-version = "0.1.1"
+version = "0.1.2"
 description = "Shared CAD workflow: viewer handling and drawing sheets"
 requires-python = ">=3.10"
 # `sheet`, `check`, and `engrave` use CadQuery's public API plus a few stable
