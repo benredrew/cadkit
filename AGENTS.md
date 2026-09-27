@@ -19,6 +19,7 @@ launches nothing — ask for the part you want.
 | viewing | `cadkit.viewer` — launch one, find one, or carry on without one |
 | drawings | `cadkit.sheet` — orthographic sheets |
 | checking | `cadkit.check` — is the solid sound, and printable? |
+| labelling | `cadkit.engrave` — dimensions cut into the part |
 
 ## Viewing: `cadkit.viewer`
 

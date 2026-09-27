@@ -24,6 +24,7 @@ human interaction or seconds of compute that a plain rebuild should never pay.
 | **`cadkit.sheet`** | Third-angle orthographic drawing sheets |
 | **`cadkit.viewer`** | Find a viewer, start one, or carry on without one |
 | **`cadkit.check`** | Is this a sound solid, and can this printer make it? |
+| **`cadkit.engrave`** | Cut a dimension into the face it describes |
 
 ## Drawing sheets
 
