@@ -2,16 +2,51 @@
 Author: Claude (Opus 5)
 Co-Author: Brendan Fennell
 -->
-# drafting
+# cadkit
 
-Orthographic drawing sheets from CadQuery solids, shared across the CAD
-projects on this machine instead of copied into each one. For any agent —
+The shared CAD workflow for every project on this machine. For any agent —
 Claude, Codex, or otherwise.
 
+**Three capabilities, and they are independent on purpose.** Generating a
+model must not require a viewer to be running, nor a drawing sheet to be
+produced; each of those costs a human interaction or seconds of compute that a
+plain rebuild should never pay. `import cadkit` connects to nothing and
+launches nothing — ask for the part you want.
+
+| | |
+|---|---|
+| modelling | CadQuery and the project's own part scripts — needs nothing here |
+| viewing | `cadkit.viewer` — launch one, find one, or carry on without one |
+| drawings | `cadkit.sheet` — orthographic sheets |
+
+## Viewing: `cadkit.viewer`
+
 ```python
-import drafting
-drafting.sheet(solid, "output/part_sheet.svg", "PART NAME",
-               fields=[("PART", "part.py"), ("ENVELOPE", "175.0 x 175.0 x 42.0")])
+from cadkit import viewer
+viewer.show(solid, name="part", port=None)   # False if nothing is listening
+viewer.serve()                                # start one on a free port
+```
+
+`show` **never raises because no viewer is running.** It says so and returns
+False, so the same part script runs identically whether or not anyone is
+watching. Never make a build depend on a GUI.
+
+Ports are contended — sessions have pushed to each other's viewers and
+screenshotted the wrong model. `CLAIMED` lists the ports with standing owners
+(3939 Aquarium, 3940/3941 Oil_Shelf); `free_port()` skips them and probes the
+rest. From the shell:
+
+```bash
+cad-python -m cadkit.viewer --status      # who is up
+cad-python -m cadkit.viewer               # start one on a free port
+```
+
+## Drawings: `cadkit.sheet`
+
+```python
+from cadkit import sheet
+sheet.sheet(solid, "output/part_sheet.svg", "PART NAME",
+            fields=[("PART", "part.py"), ("ENVELOPE", "175.0 x 175.0 x 42.0")])
 ```
 
 Call it from a part script's `__main__`, beside the STEP export, so the
@@ -33,7 +68,7 @@ is 1.414, US Letter landscape 1.294).
   so the roll of each view is arbitrary — elevations land on their side,
   isometrics upside down. It fails *silently*: the image is perfectly valid
   and simply oriented wrong, and correcting it by rotating the output is
-  guesswork repeated per part and per direction. `drafting` takes a view
+  guesswork repeated per part and per direction. `cadkit.sheet` takes a view
   direction **and** an up vector, and orients the shape before projecting.
 - **Sheets are dark on screen and light on paper.** The dark palette rides on
   presentation attributes; a `@media print` block carries the light one and
@@ -47,8 +82,8 @@ There is **no `pip` in the project venvs and `uv` is not installed**, so the
 editable install is a `.pth` file naming this package's `src` directory:
 
 ```bash
-echo /home/benredrew/Projects/drafting/src \
-  > <project>/.venv/lib/python3.12/site-packages/drafting.pth
+echo /home/benredrew/Projects/cadkit/src \
+  > <project>/.venv/lib/python3.12/site-packages/cadkit.pth
 ```
 
 Python puts that directory on `sys.path` at startup, so edits here take effect
@@ -56,8 +91,11 @@ immediately with nothing to rebuild. Remove the file to uninstall. `cadquery`
 is declared in `pyproject.toml` but deliberately **not** installed by this —
 the host project provides it, and its pinned version must not be disturbed.
 
-Already installed in `~/Projects/Aquarium/.venv`, which is also the
-interpreter `~/Projects/Oil_Shelf` runs on, so both have it.
+Already installed in the shared CAD environment, which every CAD project
+reaches through **`cad-python`** (`~/.local/bin/cad-python` →
+`~/.local/share/cad/venv`). Projects must not invoke another project's
+`.venv/bin/python` directly — Oil_Shelf did, and a rename in Aquarium would
+have broken it.
 
 `pyproject.toml` is a real package definition, so if `pip` or `uv` ever
 appears, `uv pip install -e . --no-deps` supersedes the `.pth`.
