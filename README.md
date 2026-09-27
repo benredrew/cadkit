@@ -80,6 +80,15 @@ python -m cadkit.viewer            # start one on a free port
 
 ## Checking
 
+From the shell, on a file that already exists — nothing is sliced or printed:
+
+```bash
+cad-python -m cadkit.check part.step      # exit 0 pass, 1 fail, 2 unreadable
+cad-python -m cadkit.check part.step --solid-only
+```
+
+From Python, on a shape still in memory:
+
 ```python
 from cadkit import check
 

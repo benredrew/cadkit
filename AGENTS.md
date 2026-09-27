@@ -67,6 +67,10 @@ is 1.414, US Letter landscape 1.294).
 
 ## Checking: `cadkit.check`
 
+```bash
+cad-python -m cadkit.check FILE    # 0 pass, 1 fail, 2 unreadable
+```
+
 ```python
 from cadkit import check
 check.solid(part)                  # Report; .ok, .line(), .require()

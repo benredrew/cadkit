@@ -34,6 +34,7 @@ enough, is it the right shape. Printability is `check.printable` and does not
 exist yet; correctness against intent is the author's job.
 """
 import math
+import sys
 
 from OCP.Bnd import Bnd_Box
 from OCP.BRepBndLib import BRepBndLib
@@ -343,3 +344,83 @@ def printable(shape, printer=None, bodies=1, deflection=0.1):
                             f"could not be measured: {exc}", level="warn"))
 
     return Report(checks)
+
+
+# --- Command line -----------------------------------------------------------
+def load(path):
+    """Read a model file back into a shape, and say what was lost doing it.
+
+    Returns (shape, caveats). STEP carries real solids, so every check here
+    means what it says. STL is a *mesh*: it has no solid inside it, so body
+    count, watertightness and volume are answering a different question -- one
+    about the triangles rather than about the part. Saying so is the whole
+    point of returning caveats; quietly reporting a mesh as a sound solid
+    would be the kind of confident wrong answer this module exists to prevent.
+    """
+    import cadquery as cq
+
+    path = str(path)
+    suffix = path.rsplit(".", 1)[-1].lower()
+    if suffix in ("step", "stp"):
+        return cq.importers.importStep(path), []
+    if suffix == "stl":
+        shape = cq.importers.importShape("STL", path)
+        return shape, [
+            "STL is a mesh, not a solid: body count, watertightness and "
+            "volume describe the triangles, not the part. Check the STEP if "
+            "you have one."
+        ]
+    raise ValueError(
+        f"cannot read {suffix!r}; this reads STEP (preferred) and STL")
+
+
+def _cli(argv=None):
+    """`python -m cadkit.check FILE` -- is this printable? Nothing is printed."""
+    import argparse
+
+    from . import printers as _printers
+
+    p = argparse.ArgumentParser(
+        description="Check whether a model file is a sound, printable solid. "
+                    "Nothing is sliced or printed.")
+    p.add_argument("file", help="a STEP (preferred) or STL file")
+    p.add_argument("--printer", default="prusa_mini",
+                   help="printer to check against (default: prusa_mini)")
+    p.add_argument("--bodies", default="1",
+                   help="expected number of bodies, or 'any' (default: 1)")
+    p.add_argument("--solid-only", action="store_true",
+                   help="skip the printer checks; just check the geometry")
+    p.add_argument("--quiet", action="store_true",
+                   help="print nothing; rely on the exit status")
+    args = p.parse_args(argv)
+
+    bodies = None if args.bodies.lower() in ("any", "none") else int(args.bodies)
+
+    try:
+        shape, caveats = load(args.file)
+    except Exception as exc:
+        print(f"check        cannot read {args.file}: {exc}", file=sys.stderr)
+        return 2
+
+    if args.solid_only:
+        report = solid(shape, bodies=bodies)
+        printer = None
+    else:
+        printer = _printers.get(args.printer)
+        report = printable(shape, printer, bodies=bodies)
+
+    if not args.quiet:
+        if printer is not None:
+            print(f"printer      {printer.describe()}")
+        print(report.line())
+        for c in caveats:
+            print(f"caveat       {c}")
+
+    # 0 passed, 1 something blocking failed. Warnings alone do not fail: an
+    # overhang is a thing to look at, not a refusal, and a command that exits
+    # non-zero for one would train people to ignore its exit status.
+    return 0 if report.ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli())
