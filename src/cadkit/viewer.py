@@ -76,7 +76,8 @@ def serve(port=None, open_window=True, wait=25.0, python=None):
 
     python = python or sys.executable
     subprocess.Popen(
-        [python, "-m", "ocp_vscode", "--host", HOST, "--port", str(port)],
+        [python, "-m", "cadkit.viewer", "--server", "--host", HOST,
+         "--port", str(port)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
@@ -106,18 +107,34 @@ def open_viewer_window(url):
     return False
 
 
-def show(obj, name=None, port=None, quiet=False, **options):
+def _server():
+    """Run OCP-VSCode in the foreground with CadKit's generic UI defaults."""
+    from ocp_vscode import standalone
+    from ocp_vscode.__main__ import main
+
+    # These are viewer ergonomics, not a project's model behaviour. Keeping
+    # them here lets every project use the same unobtrusive starting window.
+    standalone.INIT = (
+        'onload="showViewer(); window.viewer.showToolsPanel(false); '
+        'window.viewer.showInfoPanel(false);"'
+    )
+    main()
+
+
+def show(obj, name=None, port=None, quiet=False, clear=True,
+         reset_camera=None, options=None, **style):
     """Push `obj` to a viewer if one is there; otherwise say so and move on.
 
-    `port` pins a specific viewer. Without it, CAD_VIEWER_PORT is honoured,
-    and failing that the first port with a viewer on it is used -- which on a
-    shared machine may be somebody else's. Pin the port when it matters.
+    `port` pins a specific viewer. Without it, only CAD_VIEWER_PORT is used;
+    the function never searches for an arbitrary listening viewer because that
+    could belong to another session. `serve()` and the command-line helper
+    print the environment assignment needed by later part builds.
 
     Returns True if the object was sent, False if nothing was listening. It
     does not raise for an absent viewer: see the module docstring.
     """
     port = port or os.environ.get("CAD_VIEWER_PORT")
-    port = int(port) if port else find_viewer()
+    port = int(port) if port else None
 
     if port is None or not is_listening(port):
         if not quiet:
@@ -127,7 +144,21 @@ def show(obj, name=None, port=None, quiet=False, **options):
 
     from ocp_vscode import set_port, show_object      # imported only if used
     set_port(port)
-    show_object(obj, name=name, options=options or None, clear=True)
+    # `options=` accepts OCP-VSCode's familiar display dictionary.  Keyword
+    # styles remain convenient for new callers, and take precedence when both
+    # forms are supplied.
+    display_options = {**(options or {}), **style}
+    kwargs = {
+        "name": name,
+        "options": display_options or None,
+        "clear": clear,
+    }
+    if reset_camera is not None:
+        if reset_camera == "reset":
+            from ocp_vscode import Camera
+            reset_camera = Camera.RESET
+        kwargs["reset_camera"] = reset_camera
+    show_object(obj, **kwargs)
     if not quiet:
         print(f"viewer       shown on {port}", file=sys.stderr)
     return True
@@ -158,4 +189,8 @@ def _cli(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(_cli())
+    if "--server" in sys.argv:
+        sys.argv.remove("--server")
+        _server()
+    else:
+        raise SystemExit(_cli())

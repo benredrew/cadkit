@@ -29,7 +29,9 @@ viewer.serve()                                # start one on a free port
 
 `show` **never raises because no viewer is running.** It says so and returns
 False, so the same part script runs identically whether or not anyone is
-watching. Never make a build depend on a GUI.
+watching. It only uses an explicit port or `CAD_VIEWER_PORT`; it never guesses
+at a listener that may belong to someone else. Never make a build depend on a
+GUI.
 
 Ports are contended — sessions have pushed to each other's viewers and
 screenshotted the wrong model. `CLAIMED` lists the ports with standing owners
