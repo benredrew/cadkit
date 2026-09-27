@@ -157,11 +157,7 @@ be able to move a modelling dependency.
 pip install -e . --no-deps
 ```
 
-Where `pip` isn't available, a `.pth` file does the same job with no build step:
 
-```bash
-echo "$PWD/src" > <project>/.venv/lib/python3.12/site-packages/cadkit.pth
-```
 
 ## Also here
 

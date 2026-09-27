@@ -118,18 +118,23 @@ from a test. Overhang limit is not in that file anyway -- it is a design rule.
 
 ## Installing into a project
 
-There is **no `pip` in the project venvs and `uv` is not installed**, so the
-editable install is a `.pth` file naming this package's `src` directory:
+`uv` is installed (via mise, recorded in `~/.config/mise/config.toml`), so
+this is an ordinary editable install:
 
 ```bash
-echo "$HOME/Projects/cadkit/src" \
-  > <project>/.venv/lib/python3.12/site-packages/cadkit.pth
+VIRTUAL_ENV=<project>/.venv uv pip install -e ~/Projects/cadkit --no-deps
 ```
 
-Python puts that directory on `sys.path` at startup, so edits here take effect
-immediately with nothing to rebuild. Remove the file to uninstall. `cadquery`
-is declared in `pyproject.toml` but deliberately **not** installed by this —
-the host project provides it, and its pinned version must not be disturbed.
+**`--no-deps` is not optional.** `cadquery` is declared in `pyproject.toml`
+because it is genuinely required, but the host project pins it — adding a
+drawing library must never be able to move a modelling dependency. Verified:
+installing this way left `requirements-lock.txt` untouched.
+
+Until 2026-09-27 uv was missing from this machine and the install was a hand
+written `.pth` file. That worked but had no metadata, so nothing was listed by
+`uv pip list`, nothing could be uninstalled, and `[project.scripts]` entry
+points were never created. If you find a bare `cadkit.pth` in a venv, it is a
+leftover of that era — replace it with the command above.
 
 Already installed in the shared CAD environment, which every CAD project
 reaches through **`cad-python`** (`~/.local/bin/cad-python` →
