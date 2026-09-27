@@ -18,7 +18,7 @@ launches nothing — ask for the part you want.
 | modelling | CadQuery and the project's own part scripts — needs nothing here |
 | viewing | `cadkit.viewer` — launch one, find one, or carry on without one |
 | drawings | `cadkit.sheet` — orthographic sheets |
-| checking | `cadkit.check` — is the solid sound? |
+| checking | `cadkit.check` — is the solid sound, and printable? |
 
 ## Viewing: `cadkit.viewer`
 
@@ -79,6 +79,22 @@ and a volume off by 140% — that exact part exists in this project's history.
 
 `bodies=` states the expectation. `bodies=None` reports without judging. What
 is never acceptable is not knowing.
+
+### `check.printable`
+
+```python
+from cadkit import check, printers
+check.printable(part, printers.get("prusa_mini"))
+```
+
+Bed fit blocks; overhang warns. Read both the worst angle and the dominant
+band — one deliberate 2mm bridge makes the worst case 0 degrees and tells you
+nothing about the 14,000mm2 at 25.
+
+**Do not parse PrusaSlicer's vendor profile at runtime.** It was tried and
+measured: 2.0MB, 179ms per call, identical answer to the registry's 1
+microsecond. `printers.verify()` does the comparison when adding a printer or
+from a test. Overhang limit is not in that file anyway -- it is a design rule.
 
 ## Two things that will otherwise cost you a session
 

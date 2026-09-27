@@ -23,7 +23,7 @@ human interaction or seconds of compute that a plain rebuild should never pay.
 |---|---|
 | **`cadkit.sheet`** | Third-angle orthographic drawing sheets |
 | **`cadkit.viewer`** | Find a viewer, start one, or carry on without one |
-| **`cadkit.check`** | Is this actually a sound solid? |
+| **`cadkit.check`** | Is this a sound solid, and can this printer make it? |
 
 ## Drawing sheets
 
@@ -98,6 +98,27 @@ raised; the viewer showed a shape. Three of these checks catch it.
 Watertightness counts edges with fewer than two adjacent faces. `Shape.Closed()`
 is not the test — it is a stored flag booleans don't maintain, and it reads
 `False` on parts that are provably closed.
+
+### Printability
+
+```python
+from cadkit import check, printers
+
+check.printable(part, printers.get("prusa_mini"))
+```
+
+Bed fit is blocking; overhang is a warning, because plenty of parts print
+through one with support or by putting the droop somewhere that doesn't
+matter. The report gives the worst angle *and* where most of the offending
+area sits — a part can have a 0° worst case from one deliberate 2 mm bridge
+while its real problem is 14,000 mm² at 25°.
+
+Printer figures come from a small registry that records where each was read.
+`printers.verify()` re-reads PrusaSlicer's vendor profile — resolving the
+`inherits` chain, since only 10 of its 276 printer sections declare a bed
+shape — and tells you whether the registry has drifted. That runs when you add
+a printer, not on every check: the vendor file is 2 MB and costs 179 ms to
+parse, against 1 µs for the registry, for an identical answer.
 
 ## Why not `cq.exporters.export(..., "SVG")`
 
