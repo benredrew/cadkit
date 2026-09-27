@@ -13,30 +13,124 @@ So `show` never raises for the absence of a viewer. It reports that it found
 none and returns False, and the caller carries on exporting its STEP. Viewing
 is something you opt into, not a dependency you inherit.
 
-## Ports are contended on this machine
+## Viewer ports are explicit
 
-Several agent sessions run at once and each pushes to whatever port it was
-told about, silently replacing whatever scene was there. Agents have
-screenshotted each other's models believing them their own. `free_port` skips
-the ports already spoken for and probes the rest, so a session can take one
-that is genuinely idle instead of trusting a number copied out of a document.
+Several sessions can run at once and each can replace the scene on a shared
+viewer. `show` therefore only uses an explicit port or CAD_VIEWER_PORT.
+`free_port` chooses an unused private-range port for a disposable viewer;
+long-lived services should choose and document their own port outside CadKit.
 """
 import os
+import json
 import socket
 import subprocess
 import sys
+import tempfile
 import time
+from contextlib import contextmanager
+from pathlib import Path
+
+import fcntl
 
 HOST = "127.0.0.1"
-PORT_RANGE = range(3939, 3970)
+PORT_RANGE = range(49152, 49200)
+STARTING_TTL = 30.0
 
-# Ports with a standing owner. Not a lock -- nothing enforces this -- but
-# taking one of them means fighting that owner for the window.
-CLAIMED = {
-    3939: "Aquarium (aquarium-viewer.service)",
-    3940: "Oil_Shelf (./viewer)",
-    3941: "Oil_Shelf (./viewer_full)",
-}
+
+def _registry_path():
+    """The per-user, per-login viewer registry.
+
+    XDG_RUNTIME_DIR is intentionally preferred: viewer reservations describe
+    live processes, not configuration that should survive a reboot. A stable
+    XDG state directory is the fallback for environments without it.
+    """
+    root = (
+        os.environ.get("XDG_RUNTIME_DIR")
+        or os.environ.get("XDG_STATE_HOME")
+        or str(Path.home() / ".local" / "state")
+    )
+    return Path(root) / "cadkit" / "viewers.json"
+
+
+@contextmanager
+def _registry():
+    """Yield the viewer map under an exclusive, atomically-written lock."""
+    path = _registry_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(".lock")
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                viewers = data.get("viewers", {})
+            except (FileNotFoundError, json.JSONDecodeError):
+                viewers = {}
+            yield viewers
+            with tempfile.NamedTemporaryFile(
+                "w", dir=path.parent, encoding="utf-8", delete=False
+            ) as tmp:
+                json.dump({"viewers": viewers}, tmp, indent=2, sort_keys=True)
+                tmp.write("\n")
+            Path(tmp.name).replace(path)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def _prune(viewers):
+    """Remove entries whose server disappeared or never finished starting."""
+    now = time.time()
+    for key, entry in list(viewers.items()):
+        port = int(key)
+        if is_listening(port):
+            continue
+        if entry.get("state") == "starting" and now - entry["updated"] < STARTING_TTL:
+            continue
+        del viewers[key]
+
+
+def _viewer_name(name=None):
+    return name or os.environ.get("CAD_VIEWER_NAME") or f"{socket.gethostname()}:{os.getpid()}"
+
+
+def _reserve(port, name):
+    """Atomically reserve an idle port for a viewer that is about to start."""
+    with _registry() as viewers:
+        _prune(viewers)
+        key = str(port)
+        if key in viewers or is_listening(port):
+            return False
+        viewers[key] = {
+            "name": name,
+            "pid": None,
+            "state": "starting",
+            "updated": time.time(),
+        }
+        return True
+
+
+def _mark_running(port, name):
+    """Record the foreground server process that now owns `port`."""
+    with _registry() as viewers:
+        viewers[str(port)] = {
+            "name": name,
+            "pid": os.getpid(),
+            "state": "running",
+            "updated": time.time(),
+        }
+
+
+def _release(port):
+    """Release a registry entry after a server exits or fails to start."""
+    with _registry() as viewers:
+        viewers.pop(str(port), None)
+
+
+def registered_viewers():
+    """Live CadKit viewers as ``{port: {name, pid, state}}``."""
+    with _registry() as viewers:
+        _prune(viewers)
+        return {int(port): entry.copy() for port, entry in viewers.items()}
 
 
 def is_listening(port, host=HOST, timeout=0.25):
@@ -54,39 +148,54 @@ def find_viewer(ports=PORT_RANGE, host=HOST):
     return None
 
 
-def free_port(ports=PORT_RANGE, host=HOST, avoid_claimed=True):
-    """An idle port, skipping those with a standing owner."""
+def free_port(ports=PORT_RANGE, host=HOST):
+    """An idle port in `ports`, suitable for a disposable viewer."""
+    reserved = registered_viewers()
     for port in ports:
-        if avoid_claimed and port in CLAIMED:
-            continue
-        if not is_listening(port, host):
+        if port not in reserved and not is_listening(port, host):
             return port
     raise RuntimeError(f"no free port in {ports.start}..{ports.stop - 1}")
 
 
-def serve(port=None, open_window=True, wait=25.0, python=None):
+def serve(port=None, name=None, open_window=True, wait=25.0, python=None):
     """Start a viewer of our own and optionally open a window on it.
 
     Returns (port, url). A port already serving is returned as-is rather than
     started twice.
     """
-    port = port or free_port()
-    if is_listening(port):
-        return port, f"http://{HOST}:{port}/"
+    name = _viewer_name(name)
+    candidates = (port,) if port is not None else PORT_RANGE
+    for candidate in candidates:
+        if is_listening(candidate):
+            if port is not None:
+                return candidate, f"http://{HOST}:{candidate}/"
+            continue
+        if _reserve(candidate, name):
+            port = candidate
+            break
+    else:
+        if port is not None:
+            raise RuntimeError(f"viewer port {port} is already reserved")
+        raise RuntimeError(f"no free port in {PORT_RANGE.start}..{PORT_RANGE.stop - 1}")
 
     python = python or sys.executable
-    subprocess.Popen(
-        [python, "-m", "cadkit.viewer", "--server", "--host", HOST,
-         "--port", str(port)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    try:
+        subprocess.Popen(
+            [python, "-m", "cadkit.viewer", "--server", "--host", HOST,
+             "--port", str(port), "--name", name],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception:
+        _release(port)
+        raise
     deadline = time.time() + wait
     while time.time() < deadline:
         if is_listening(port):
             break
         time.sleep(0.25)
     else:
+        _release(port)
         raise RuntimeError(f"viewer did not come up on {port} within {wait:g}s")
 
     url = f"http://{HOST}:{port}/"
@@ -96,18 +205,13 @@ def serve(port=None, open_window=True, wait=25.0, python=None):
 
 
 def open_viewer_window(url):
-    """Open a desktop window on a running viewer, if we can. Never fatal."""
-    for cmd in (["omarchy", "launch", "webapp", url], ["xdg-open", url]):
-        try:
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
-            return True
-        except FileNotFoundError:
-            continue
-    return False
+    """Open a running viewer in the platform browser, if possible."""
+    import webbrowser
+
+    return webbrowser.open(url)
 
 
-def _server():
+def _server(port, name):
     """Run OCP-VSCode in the foreground with CadKit's generic UI defaults."""
     from ocp_vscode import standalone
     from ocp_vscode.__main__ import main
@@ -118,7 +222,11 @@ def _server():
         'onload="showViewer(); window.viewer.showToolsPanel(false); '
         'window.viewer.showInfoPanel(false);"'
     )
-    main()
+    _mark_running(port, name)
+    try:
+        main()
+    finally:
+        _release(port)
 
 
 def show(obj, name=None, port=None, quiet=False, clear=True,
@@ -170,19 +278,20 @@ def _cli(argv=None):
 
     p = argparse.ArgumentParser(description="Start an OCP viewer on a free port.")
     p.add_argument("--port", type=int, default=None,
-                   help="port to use (default: the first idle unclaimed one)")
+                   help="port to use (default: the first idle private-range port)")
+    p.add_argument("--name", default=None,
+                   help="label recorded for this viewer (default: CAD_VIEWER_NAME)")
     p.add_argument("--no-window", action="store_true", help="server only")
     p.add_argument("--status", action="store_true",
                    help="list which viewer ports are up, and who owns them")
     args = p.parse_args(argv)
 
     if args.status:
-        for port in PORT_RANGE:
-            if is_listening(port):
-                print(f"{port}  up    {CLAIMED.get(port, '(unclaimed)')}")
+        for port, entry in sorted(registered_viewers().items()):
+            print(f"{port}  {entry['state']:8s}  {entry['name']}  pid={entry['pid']}")
         return 0
 
-    port, url = serve(port=args.port, open_window=not args.no_window)
+    port, url = serve(port=args.port, name=args.name, open_window=not args.no_window)
     print(f"viewer on {url}")
     print(f"export CAD_VIEWER_PORT={port}")
     return 0
@@ -190,7 +299,13 @@ def _cli(argv=None):
 
 if __name__ == "__main__":
     if "--server" in sys.argv:
-        sys.argv.remove("--server")
-        _server()
+        server = __import__("argparse").ArgumentParser(add_help=False)
+        server.add_argument("--server", action="store_true")
+        server.add_argument("--host", default=HOST)
+        server.add_argument("--port", type=int, required=True)
+        server.add_argument("--name", default=None)
+        args = server.parse_args()
+        sys.argv = [sys.argv[0], "--host", args.host, "--port", str(args.port)]
+        _server(args.port, _viewer_name(args.name))
     else:
         raise SystemExit(_cli())

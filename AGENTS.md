@@ -4,8 +4,8 @@ Co-Author: Brendan Fennell
 -->
 # cadkit
 
-The shared CAD workflow for every project on this machine. For any agent —
-Claude, Codex, or otherwise.
+The shared CAD workflow for code-defined CAD projects. For any agent — Claude,
+Codex, or otherwise.
 
 **Three capabilities, and they are independent on purpose.** Generating a
 model must not require a viewer to be running, nor a drawing sheet to be
@@ -26,7 +26,7 @@ launches nothing — ask for the part you want.
 ```python
 from cadkit import viewer
 viewer.show(solid, name="part", port=None)   # False if nothing is listening
-viewer.serve()                                # start one on a free port
+viewer.serve(name="lamp-shade")               # start one on a free port
 ```
 
 `show` **never raises because no viewer is running.** It says so and returns
@@ -35,15 +35,21 @@ watching. It only uses an explicit port or `CAD_VIEWER_PORT`; it never guesses
 at a listener that may belong to someone else. Never make a build depend on a
 GUI.
 
-Ports are contended — sessions have pushed to each other's viewers and
-screenshotted the wrong model. `CLAIMED` lists the ports with standing owners
-(3939 Aquarium, 3940/3941 Oil_Shelf); `free_port()` skips them and probes the
-rest. From the shell:
+Ports are contended — sessions can push to each other's viewers and screenshot
+the wrong model. `show` never guesses at a listener; use `CAD_VIEWER_PORT` or
+an explicit port. `free_port()` chooses an unused private-range port for a
+disposable viewer. From the shell:
 
 ```bash
-cad-python -m cadkit.viewer --status      # who is up
-cad-python -m cadkit.viewer               # start one on a free port
+python -m cadkit.viewer --status      # private-range viewers that are up
+python -m cadkit.viewer               # start one on a free port
 ```
+
+CadKit atomically reserves a port before starting its server and records the
+viewer name and PID in the user's XDG runtime directory. Set
+`CAD_VIEWER_NAME` (or pass `name=` to `serve`) for any agent-owned viewer, then
+use the emitted `CAD_VIEWER_PORT` for the build that belongs there. The status
+command lists CadKit-managed viewers and clears stale entries automatically.
 
 ## Drawings: `cadkit.sheet`
 
@@ -68,7 +74,7 @@ is 1.414, US Letter landscape 1.294).
 ## Checking: `cadkit.check`
 
 ```bash
-cad-python -m cadkit.check FILE    # 0 pass, 1 fail, 2 unreadable
+python -m cadkit.check FILE    # 0 pass, 1 fail, 2 unreadable
 ```
 
 ```python
@@ -116,31 +122,18 @@ from a test. Overhang limit is not in that file anyway -- it is a design rule.
   `rsvg-convert` keeps the dark version. **Print the SVG, not the PNG** — any
   PNG beside it is a screen artefact and really is dark.
 
-## Installing into a project
+## Installing
 
-`uv` is installed (via mise, recorded in `~/.config/mise/config.toml`), so
-this is an ordinary editable install:
+CadKit is installed into the environment that will build the project's models.
+It is not coupled to a sibling checkout, a shared virtual environment, or a
+particular user directory:
 
 ```bash
-VIRTUAL_ENV=<project>/.venv uv pip install -e ~/Projects/cadkit --no-deps
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[viewer]"
 ```
 
-**`--no-deps` is not optional.** `cadquery` is declared in `pyproject.toml`
-because it is genuinely required, but the host project pins it — adding a
-drawing library must never be able to move a modelling dependency. Verified:
-installing this way left `requirements-lock.txt` untouched.
-
-Until 2026-09-27 uv was missing from this machine and the install was a hand
-written `.pth` file. That worked but had no metadata, so nothing was listed by
-`uv pip list`, nothing could be uninstalled, and `[project.scripts]` entry
-points were never created. If you find a bare `cadkit.pth` in a venv, it is a
-leftover of that era — replace it with the command above.
-
-Already installed in the shared CAD environment, which every CAD project
-reaches through **`cad-python`** (`~/.local/bin/cad-python` →
-`~/.local/share/cad/venv`). Projects must not invoke another project's
-`.venv/bin/python` directly — Oil_Shelf did, and a rename in Aquarium would
-have broken it.
-
-`pyproject.toml` is a real package definition, so if `pip` or `uv` ever
-appears, `uv pip install -e . --no-deps` supersedes the `.pth`.
+The `viewer` extra installs OCP-VSCode. Omit it for a headless environment;
+modelling, checks, engraving, and sheets remain independent of a running
+viewer. CadKit constrains CadQuery to its tested 2.8 release line. A project
+that needs an exact toolchain should record its own lockfile.

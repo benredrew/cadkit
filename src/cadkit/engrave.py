@@ -41,18 +41,6 @@ TRACKING = 0.6  # extra gap between character cells, in mm of arc
 # Fonts are resolved here, once, and the answer is a file that has been proven
 # to produce glyphs -- not a name, and not a hope.
 #
-# This used to read `os.environ.get("AQUARIUM_FONT_PATH")` and nothing else, so
-# FONT_PATH was None unless ./preview had exported it. CadQuery then asked for
-# its default font, Arial, which does not exist on this machine; the request
-# returned a shape with no faces, and OCCT indexed Faces()[0] on it. The part
-# died with `IndexError: list index out of range` from inside makeText, which
-# names neither fonts nor the missing variable. Three parts were broken that
-# way and it read as a CadQuery bug.
-#
-# It stayed hidden because every part was run through ./preview, which sets the
-# variable. That is no longer true: `cad-python part.py` runs a part directly,
-# and a model that only builds through one bash wrapper is not really building.
-#
 # Candidates are *tested*, not merely found. A font file that exists but yields
 # no geometry for our own FONT_SIZE and weight is the exact failure above, and
 # checking the path exists would not have caught it.
@@ -90,8 +78,7 @@ def _fontconfig_bold_sans():
 
 
 def _resolve_font():
-    explicit = (os.environ.get("CAD_FONT_PATH")
-                or os.environ.get("AQUARIUM_FONT_PATH"))
+    explicit = os.environ.get("CAD_FONT_PATH")
     if explicit:
         # An explicit request that does not work is an error, never something
         # to quietly paper over -- the label would silently change shape.
@@ -111,7 +98,7 @@ def _resolve_font():
         return found
     raise RuntimeError(
         "no usable bold font found. Engraving needs a TrueType bold sans; "
-        "tried CAD_FONT_PATH/AQUARIUM_FONT_PATH, then " + ", ".join(FONT_CANDIDATES)
+        "tried CAD_FONT_PATH, then " + ", ".join(FONT_CANDIDATES)
         + ", then fc-match sans:bold. Install one (ttf-liberation) or set "
         "CAD_FONT_PATH to a font file that works."
     )

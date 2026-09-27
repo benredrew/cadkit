@@ -4,12 +4,17 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cadkit"
-version = "0.1.0"
+version = "0.1.1"
 description = "Shared CAD workflow: viewer handling and drawing sheets"
 requires-python = ">=3.10"
-# Provided by the host project's environment. Installed with --no-deps so that
-# adding this package cannot disturb a project's pinned CadQuery.
-dependencies = ["cadquery>=2.8"]
+# `sheet`, `check`, and `engrave` use CadQuery's public API plus a few stable
+# implementation details tested against the 2.8 line.
+dependencies = ["cadquery>=2.8,<2.9"]
+
+[project.optional-dependencies]
+# Viewing is deliberately optional: model builds, checks, and sheets work
+# without a running viewer or its web-server package.
+viewer = ["ocp-vscode>=4.0,<4.1"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cadkit"]

@@ -60,7 +60,7 @@ describes.
 from cadkit import viewer
 
 viewer.show(solid, name="part")   # False if nothing is listening — never raises
-viewer.serve()                    # start one on a genuinely free port
+viewer.serve(name="lamp-shade")  # start and reserve a genuinely free port
 ```
 
 `show` **never raises because no viewer is running.** A part script that dies
@@ -69,23 +69,43 @@ viewer", charged on every headless run. It reports and returns `False`; the
 caller carries on exporting.
 
 It uses an explicit port or `CAD_VIEWER_PORT` and never guesses at a listener,
-because on a shared machine that listener may be someone else's — this is not
-hypothetical, sessions here have screenshotted each other's models. A registry
-of claimed ports and `free_port()` keep them out of each other's way.
+because on a shared machine that listener may be someone else's. `free_port()`
+chooses an unused private-range port for a disposable viewer; a project that
+runs a long-lived viewer service owns and documents its own port.
 
 ```bash
 python -m cadkit.viewer --status   # which viewers are up, and whose
 python -m cadkit.viewer            # start one on a free port
 ```
 
+### Viewer reservations
+
+CadKit tracks its live viewers in a per-user XDG runtime registry. Starting a
+viewer atomically reserves its port before the server launches, then records a
+label and PID once it is running. This prevents parallel agents from selecting
+the same idle port or silently reusing another project's viewer.
+
+Give each long-lived or agent-owned viewer a meaningful name:
+
+```bash
+CAD_VIEWER_NAME=lamp-shade python -m cadkit.viewer
+# viewer on http://127.0.0.1:49152/
+# export CAD_VIEWER_PORT=49152
+```
+
+Use that exported port for the build that should display there. `show()` never
+searches for a viewer, so a model cannot hijack another viewer by accident.
+`python -m cadkit.viewer --status` lists CadKit-managed viewers; entries whose
+processes disappear are cleaned up automatically.
+
 ## Checking
 
 From the shell, on a file that already exists — nothing is sliced or printed:
 
 ```bash
-cad-python -m cadkit.check part.step      # exit 0 pass, 1 fail, 2 unreadable
-#                                        STEP or BREP; an STL has no solid to check
-cad-python -m cadkit.check part.step --solid-only
+python -m cadkit.check part.step      # exit 0 pass, 1 fail, 2 unreadable
+#                                     STEP or BREP; an STL has no solid to check
+python -m cadkit.check part.step --solid-only
 ```
 
 From Python, on a shape still in memory:
@@ -149,14 +169,20 @@ stated rather than discovered.
 
 ## Install
 
-`cadquery` is declared as a dependency but deliberately **not** installed by
-this package — the host project pins it, and adding a drawing library must not
-be able to move a modelling dependency.
+CadKit is a normal Python package. It needs Python 3.10+ and CadQuery 2.8.x;
+the optional `viewer` extra adds OCP-VSCode. Clone CadKit on its own — no
+example or portfolio project is required:
 
 ```bash
-pip install -e . --no-deps
+git clone https://github.com/benredrew/cadkit.git
+cd cadkit
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[viewer]"
 ```
 
+For a headless build/check/drawing environment, install `-e .` instead. The
+package constrains CadQuery to the tested 2.8 release line; a future workshop
+installer can pin the entire toolchain for a fully locked environment.
 
 
 ## Also here
