@@ -18,6 +18,7 @@ launches nothing — ask for the part you want.
 | modelling | CadQuery and the project's own part scripts — needs nothing here |
 | viewing | `cadkit.viewer` — launch one, find one, or carry on without one |
 | drawings | `cadkit.sheet` — orthographic sheets |
+| checking | `cadkit.check` — is the solid sound? |
 
 ## Viewing: `cadkit.viewer`
 
@@ -62,6 +63,22 @@ view because the parts this was built against are axisymmetric, which is the
 wrong default for a part that is not. `size=` overrides the sheet
 proportions, which default to a full-screen workspace tile (A4/A3 landscape
 is 1.414, US Letter landscape 1.294).
+
+## Checking: `cadkit.check`
+
+```python
+from cadkit import check
+check.solid(part)                  # Report; .ok, .line(), .require()
+check.solid(part, bodies=3)        # multi-body is legitimate; state the count
+```
+
+**Run it and print `report.line()` before claiming a part is finished.** An
+agent's confidence is worth nothing; only an executed check counts. A model
+that builds and displays can still have non-finite bounds, five naked edges
+and a volume off by 140% — that exact part exists in this project's history.
+
+`bodies=` states the expectation. `bodies=None` reports without judging. What
+is never acceptable is not knowing.
 
 ## Two things that will otherwise cost you a session
 

@@ -23,6 +23,7 @@ human interaction or seconds of compute that a plain rebuild should never pay.
 |---|---|
 | **`cadkit.sheet`** | Third-angle orthographic drawing sheets |
 | **`cadkit.viewer`** | Find a viewer, start one, or carry on without one |
+| **`cadkit.check`** | Is this actually a sound solid? |
 
 ## Drawing sheets
 
@@ -75,6 +76,28 @@ of claimed ports and `free_port()` keep them out of each other's way.
 python -m cadkit.viewer --status   # which viewers are up, and whose
 python -m cadkit.viewer            # start one on a free port
 ```
+
+## Checking
+
+```python
+from cadkit import check
+
+report = check.solid(part)            # one body expected
+report = check.solid(part, bodies=3)  # an assembly, or a part split for printing
+print(report.line())                  # a verdict, always
+report.require()                      # or raise, as a gate
+```
+
+Body count, geometry validity, watertightness, finite bounds, positive volume.
+Each is there because its absence let something through.
+
+A revolve of collinear samples once **built, displayed, and was garbage** — an
+infinite bounding box and 284 cm³ for a part that is really 117. Nothing
+raised; the viewer showed a shape. Three of these checks catch it.
+
+Watertightness counts edges with fewer than two adjacent faces. `Shape.Closed()`
+is not the test — it is a stored flag booleans don't maintain, and it reads
+`False` on parts that are provably closed.
 
 ## Why not `cq.exporters.export(..., "SVG")`
 

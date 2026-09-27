@@ -18,4 +18,4 @@ neither submodule is imported here; ask for the one you want:
 returns False rather than raising -- so the same part script runs identically
 whether or not anyone is watching it.
 """
-__all__ = ["viewer", "sheet"]
+__all__ = ["viewer", "sheet", "check"]
