@@ -348,30 +348,33 @@ def printable(shape, printer=None, bodies=1, deflection=0.1):
 
 # --- Command line -----------------------------------------------------------
 def load(path):
-    """Read a model file back into a shape, and say what was lost doing it.
+    """Read a model file back into a shape.
 
-    Returns (shape, caveats). STEP carries real solids, so every check here
-    means what it says. STL is a *mesh*: it has no solid inside it, so body
-    count, watertightness and volume are answering a different question -- one
-    about the triangles rather than about the part. Saying so is the whole
-    point of returning caveats; quietly reporting a mesh as a sound solid
-    would be the kind of confident wrong answer this module exists to prevent.
+    STEP and BREP carry real solids, so every check here means what it says.
+
+    **STL is refused, not read.** CadQuery imports STEP, BREP, BIN and DXF and
+    has no STL importer at all -- and that is not an oversight to work around:
+    an STL is a mesh, a bag of triangles with no solid inside it. Body count,
+    watertightness and volume would be answering a question about the
+    triangles rather than about the part. Reconstructing a solid from a mesh
+    is guesswork, and a guess reported in the same words as a measurement is
+    the exact failure this module exists to prevent. Check the STEP.
     """
     import cadquery as cq
 
     path = str(path)
     suffix = path.rsplit(".", 1)[-1].lower()
     if suffix in ("step", "stp"):
-        return cq.importers.importStep(path), []
+        return cq.importers.importStep(path)
+    if suffix == "brep":
+        return cq.importers.importBrep(path)
     if suffix == "stl":
-        shape = cq.importers.importShape("STL", path)
-        return shape, [
-            "STL is a mesh, not a solid: body count, watertightness and "
-            "volume describe the triangles, not the part. Check the STEP if "
-            "you have one."
-        ]
+        raise ValueError(
+            "STL is a mesh, not a solid -- there is no solid in the file to "
+            "check, and reconstructing one would be a guess reported as a "
+            "measurement. Check the STEP that produced it.")
     raise ValueError(
-        f"cannot read {suffix!r}; this reads STEP (preferred) and STL")
+        f"cannot read {suffix!r}; this reads STEP (preferred) and BREP")
 
 
 def _cli(argv=None):
@@ -382,8 +385,9 @@ def _cli(argv=None):
 
     p = argparse.ArgumentParser(
         description="Check whether a model file is a sound, printable solid. "
-                    "Nothing is sliced or printed.")
-    p.add_argument("file", help="a STEP (preferred) or STL file")
+                    "Nothing is sliced or printed. STEP or BREP; an STL "
+                    "has no solid in it to check.")
+    p.add_argument("file", help="a STEP or BREP file")
     p.add_argument("--printer", default="prusa_mini",
                    help="printer to check against (default: prusa_mini)")
     p.add_argument("--bodies", default="1",
@@ -397,7 +401,7 @@ def _cli(argv=None):
     bodies = None if args.bodies.lower() in ("any", "none") else int(args.bodies)
 
     try:
-        shape, caveats = load(args.file)
+        shape = load(args.file)
     except Exception as exc:
         print(f"check        cannot read {args.file}: {exc}", file=sys.stderr)
         return 2
@@ -413,8 +417,6 @@ def _cli(argv=None):
         if printer is not None:
             print(f"printer      {printer.describe()}")
         print(report.line())
-        for c in caveats:
-            print(f"caveat       {c}")
 
     # 0 passed, 1 something blocking failed. Warnings alone do not fail: an
     # overhang is a thing to look at, not a refusal, and a command that exits

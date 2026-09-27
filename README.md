@@ -84,6 +84,7 @@ From the shell, on a file that already exists — nothing is sliced or printed:
 
 ```bash
 cad-python -m cadkit.check part.step      # exit 0 pass, 1 fail, 2 unreadable
+#                                        STEP or BREP; an STL has no solid to check
 cad-python -m cadkit.check part.step --solid-only
 ```
 
