@@ -82,7 +82,7 @@ There is **no `pip` in the project venvs and `uv` is not installed**, so the
 editable install is a `.pth` file naming this package's `src` directory:
 
 ```bash
-echo /home/benredrew/Projects/cadkit/src \
+echo "$HOME/Projects/cadkit/src" \
   > <project>/.venv/lib/python3.12/site-packages/cadkit.pth
 ```
 
